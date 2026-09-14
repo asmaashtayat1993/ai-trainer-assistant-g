@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>مساعد المدرب الذكي</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f5f8fb;margin:0;color:#163043}
+.wrap{max-width:1000px;margin:auto;padding:24px}
+.card{background:#fff;border:1px solid #d9e2ea;border-radius:22px;padding:22px;margin-bottom:18px}
+h1,h2{margin:0 0 14px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+label{font-size:14px;color:#52697a}
+input,select,textarea,button{width:100%;box-sizing:border-box;font:inherit}
+input,select,textarea{padding:12px;border:1px solid #cbd7e0;border-radius:14px;margin-top:6px}
+textarea{min-height:90px}
+button{background:#2f6f8f;color:#fff;border:0;padding:14px;border-radius:14px;font-weight:700;cursor:pointer}
+.result{white-space:pre-wrap;line-height:1.9}
+.small{font-size:13px;color:#6d7f8a}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>مساعد المدرب الذكي</h1>
+    <div class="small">أدخل احتياجك وسيعطيك نتيجة جاهزة مباشرة.</div>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div><label>المرحلة<select id="stage"><option>قبل الجلسة</option><option>أثناء الجلسة</option><option>بعد الجلسة</option><option>عندي مشكلة الآن</option></select></label></div>
+      <div><label>نوع المساعدة<input id="need" value="حضّر جلسة كاملة"></label></div>
+      <div><label>التخصص<input id="specialty" placeholder="مثال: تطوير التطبيقات"></label></div>
+      <div><label>الموضوع أو الموقف<input id="topic" placeholder="مثال: VLOOKUP في Excel"></label></div>
+      <div><label>مستوى المتدربين<select id="level"><option>مبتدئ</option><option>متوسط</option><option>متقدم</option></select></label></div>
+      <div><label>الوقت المتاح<input id="duration" placeholder="مثال: 60 دقيقة"></label></div>
+      <div><label>عدد المتدربين<input id="trainees" placeholder="مثال: 18"></label></div>
+      <div><label>النتيجة المطلوبة<input id="goal" placeholder="ما الذي تريد أن يصل إليه المتدرب؟"></label></div>
+    </div>
+    <label>معلومة إضافية مهمة؟<textarea id="extra" placeholder="اختياري"></textarea></label>
+    <button id="go">أعطني الحل الجاهز</button>
+  </div>
+
+  <div class="card">
+    <h2>حل مخصص لحالتك</h2>
+    <div id="result" class="result">بانتظار طلبك...</div>
+  </div>
+
+  <div class="card">
+    <h2>عدّل أو تابع على نفس الحل</h2>
+    <textarea id="followup" placeholder="مثال: حوّل النشاط إلى مجموعات، أو أعطني أسئلة مع الإجابات"></textarea>
+    <button id="follow">تابع</button>
+  </div>
+</div>
+<script>
+let history=[];
+async function send(followup=""){
+  const result=document.getElementById("result");
+  result.textContent="جاري إعداد الحل...";
+  const body={
+    stage:stage.value, need:need.value, specialty:specialty.value, topic:topic.value,
+    level:level.value, duration:duration.value, trainees:trainees.value, goal:goal.value,
+    extra:extra.value, followup, history
+  };
+  try{
+    const r=await fetch("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const data=await r.json();
+    if(!r.ok) throw new Error(data.error||"حدث خطأ");
+    result.textContent=data.text;
+    history.push({role:"user",content:followup || `${need.value}: ${topic.value}`});
+    history.push({role:"assistant",content:data.text});
+    history=history.slice(-6);
+  }catch(e){
+    result.textContent=e.message || "تعذر الاتصال بالمساعد.";
+  }
+}
+go.onclick=()=>send("");
+follow.onclick=()=>send(followup.value);
+</script>
+</body>
+</html>

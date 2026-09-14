@@ -1,0 +1,8 @@
+{
+  "name": "ai-trainer-assistant",
+  "version": "1.0.1",
+  "type": "module",
+  "dependencies": {
+    "@google/genai": "^1.0.0"
+  }
+}
