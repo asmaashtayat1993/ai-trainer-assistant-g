@@ -5,99 +5,66 @@ const ai = new GoogleGenAI({
 });
 
 const SYSTEM_INSTRUCTION = `
-أنت "مساعد المدرب الذكي"، مساعد مهني للمدربين.
-أعطِ الناتج الجاهز للاستخدام مباشرة، ولا تكتفِ بإرشادات عامة.
+أنت مساعد المدرب الذكي.
+أعطِ المدرب الناتج الجاهز للاستخدام مباشرة، وليس نصائح عامة.
 
-قواعد مهمة:
-- اكتب بالعربية الواضحة والمهنية.
-- خصّص الإجابة حسب التخصص والموضوع ومستوى المتدربين والوقت والعدد والهدف.
-- إذا طلب المستخدم خطة جلسة: أعطِ خطة فعلية موزعة زمنيًا، مع ما يقوله أو يفعله المدرب، وما يفعله المتدربون، والأدوات، والتقييم، والخطة البديلة عند الحاجة.
-- إذا طلب نشاطًا: أعطِ نشاطًا كاملًا قابلًا للتنفيذ، وليس مجرد اسم استراتيجية.
-- إذا طلب تقييمًا: أعطِ الأسئلة أو المهمة والإجابات أو معايير التقييم حسب الحاجة.
-- إذا طلب تبسيطًا: اشرح الموضوع فعليًا مع مثال وتشبيه مناسبين.
-- إذا كانت لديه مشكلة أثناء الجلسة: أعطِ خطوات عملية فورية قابلة للتطبيق الآن.
-- لا تربط استراتيجية تدريبية بالخدمة بشكل آلي؛ استخدمها فقط إذا كانت مناسبة.
-- إذا اختار "شيء آخر" أو كتب طلبًا خاصًا، نفّذ الطلب كما هو.
-- تجنب الحشو والعبارات العامة.
-- قبل الإنهاء تأكد: هل أعطيت المدرب الناتج نفسه أم فقط نصائح لصناعته؟ إن كان مجرد نصائح، حوّله إلى ناتج جاهز.
+اكتب بالعربية الواضحة.
+خصص الإجابة حسب التخصص والموضوع والمستوى والوقت وعدد المتدربين والهدف.
+
+إذا طلب خطة جلسة:
+- أعط خطة كاملة موزعة بالوقت.
+- اكتب ماذا يفعل المدرب.
+- اكتب ماذا يفعل المتدربون.
+- أعط أمثلة فعلية.
+- أعط نشاطًا جاهزًا.
+- أعط طريقة تقييم واضحة.
+- أعط بديلًا إذا لم ينجح النشاط.
+
+إذا طلب نشاطًا أو تقييمًا أو تبسيطًا أو حل مشكلة:
+أعطِ الناتج نفسه كاملًا وجاهزًا للتطبيق.
+
+تجنب الكلام العام والحشو.
 `;
 
-function buildUserPrompt(body = {}) {
-  const {
-    stage,
-    need,
-    specialty,
-    topic,
-    level,
-    duration,
-    trainees,
-    goal,
-    extra,
-    followup,
-    history = [],
-  } = body;
+function buildPrompt(body = {}) {
+  return `
+المرحلة: ${body.stage || "غير محددة"}
+نوع المساعدة: ${body.need || "غير محدد"}
+التخصص: ${body.specialty || "غير محدد"}
+الموضوع أو الموقف: ${body.topic || "غير محدد"}
+مستوى المتدربين: ${body.level || "غير محدد"}
+الوقت المتاح: ${body.duration || "غير محدد"}
+عدد المتدربين: ${body.trainees || "غير محدد"}
+النتيجة المطلوبة: ${body.goal || "غير محددة"}
+معلومات إضافية: ${body.extra || "لا يوجد"}
 
-  let text = `
-المرحلة: ${stage || "غير محددة"}
-نوع المساعدة: ${need || "غير محدد"}
-التخصص: ${specialty || "غير محدد"}
-الموضوع/الموقف: ${topic || "غير محدد"}
-مستوى المتدربين: ${level || "غير محدد"}
-الوقت المتاح: ${duration || "غير محدد"}
-عدد المتدربين: ${trainees || "غير محدد"}
-النتيجة المطلوبة: ${goal || "غير محددة"}
-معلومات إضافية: ${extra || "لا يوجد"}
+${body.followup ? `طلب المتابعة: ${body.followup}` : ""}
+
+أعطني الآن الناتج الجاهز مباشرة.
 `;
+}
 
-  if (Array.isArray(history) && history.length) {
-    text += "\nالسياق السابق:\n";
+function extractText(response) {
+  if (response?.text && typeof response.text === "string") {
+    return response.text.trim();
+  }
 
-    for (const item of history.slice(-6)) {
-      const who =
-        item.role === "assistant" ? "المساعد" : "المستخدم";
+  const candidates = response?.candidates || [];
 
-      text += `${who}: ${item.content || ""}\n`;
+  for (const candidate of candidates) {
+    const parts = candidate?.content?.parts || [];
+
+    const text = parts
+      .map(part => part?.text || "")
+      .join("\n")
+      .trim();
+
+    if (text) {
+      return text;
     }
   }
 
-  if (followup) {
-    text += `\nطلب المتابعة أو التعديل: ${followup}\n`;
-  }
-
-  text += "\nأعطني الآن الناتج الجاهز مباشرة.";
-
-  return text;
-}
-
-async function callModel(model, prompt, timeoutMs) {
-  const request = ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      maxOutputTokens: 3500,
-      temperature: 0.55,
-    },
-  });
-
-  const timeout = new Promise((_, reject) => {
-    setTimeout(() => {
-      const err = new Error("TIMEOUT");
-      err.status = 504;
-      reject(err);
-    }, timeoutMs);
-  });
-
-  return Promise.race([request, timeout]);
-}
-
-function getStatus(err) {
-  return Number(
-    err?.status ||
-    err?.error?.code ||
-    err?.response?.status ||
-    500
-  );
+  return "";
 }
 
 export default async function handler(req, res) {
@@ -109,120 +76,67 @@ export default async function handler(req, res) {
 
   if (!process.env.GEMINI_API_KEY) {
     return res.status(500).json({
-      error: "مفتاح Gemini غير موجود في إعدادات Vercel.",
+      error: "مفتاح Gemini غير موجود في Vercel.",
     });
   }
 
-  const prompt = buildUserPrompt(req.body);
-
-  const primaryModel =
-    process.env.GEMINI_MODEL ||
-    "gemini-3.5-flash-lite";
-
-  const fallbackModel =
-    process.env.GEMINI_FALLBACK_MODEL ||
-    "gemini-3.6-flash";
-
   try {
-    const response = await callModel(
-      primaryModel,
-      prompt,
-      10000
-    );
+    const prompt = buildPrompt(req.body);
 
-    return res.status(200).json({
-      text:
-        response.text ||
-        "لم يتم توليد نص. حاولي مرة أخرى.",
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash-lite",
+
+      contents: prompt,
+
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        temperature: 0.6,
+        maxOutputTokens: 4000,
+      },
     });
 
-  } catch (err) {
+    const text = extractText(response);
 
-    const status = getStatus(err);
+    if (!text) {
+      console.error(
+        "Gemini returned no text:",
+        JSON.stringify(response)
+      );
 
-    const transient =
-      status === 503 ||
-      status === 504 ||
-      status === 429 ||
-      String(err?.message || "").includes("UNAVAILABLE") ||
-      String(err?.message || "").includes("TIMEOUT");
-
-    if (
-      transient &&
-      fallbackModel !== primaryModel
-    ) {
-
-      try {
-        const response2 = await callModel(
-          fallbackModel,
-          prompt,
-          8000
-        );
-
-        return res.status(200).json({
-          text:
-            response2.text ||
-            "لم يتم توليد نص. حاولي مرة أخرى.",
-        });
-
-      } catch (err2) {
-
-        const status2 = getStatus(err2);
-
-        console.error(
-          "Gemini fallback error:",
-          err2
-        );
-
-        if (status2 === 429) {
-          return res.status(429).json({
-            error:
-              "تم الوصول إلى الحد المجاني مؤقتًا. حاولي بعد قليل.",
-          });
-        }
-
-        if (
-          status2 === 503 ||
-          status2 === 504
-        ) {
-          return res.status(503).json({
-            error:
-              "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. حاولي بعد قليل.",
-          });
-        }
-
-        return res.status(500).json({
-          error:
-            "تعذر توليد الاستجابة حاليًا.",
-        });
-      }
+      return res.status(502).json({
+        error: "وصل رد من Gemini لكنه لم يحتوِ على نص.",
+      });
     }
 
-    console.error(
-      "Gemini primary error:",
-      err
-    );
+    return res.status(200).json({
+      text,
+    });
+
+  } catch (error) {
+    console.error("Gemini Error:", error);
+
+    const status =
+      error?.status ||
+      error?.error?.code ||
+      500;
+
+    if (status === 503) {
+      return res.status(503).json({
+        error:
+          "خدمة Gemini مشغولة حاليًا. حاولي مرة أخرى بعد قليل.",
+      });
+    }
 
     if (status === 429) {
       return res.status(429).json({
         error:
-          "تم الوصول إلى الحد المجاني مؤقتًا. حاولي بعد قليل.",
-      });
-    }
-
-    if (
-      status === 503 ||
-      status === 504
-    ) {
-      return res.status(503).json({
-        error:
-          "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. حاولي بعد قليل.",
+          "تم الوصول إلى الحد المجاني مؤقتًا.",
       });
     }
 
     return res.status(500).json({
       error:
-        "تعذر توليد الاستجابة حاليًا.",
+        "حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.",
     });
   }
 }
