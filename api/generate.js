@@ -1,27 +1,47 @@
-
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+});
 
-const SYSTEM = `
-أنت مساعد مدرب مهني ذكي. مهمتك إعطاء الناتج الجاهز للاستخدام مباشرة، وليس نصائح عامة لصناعته.
-اكتب بالعربية الواضحة. إذا طلب المستخدم خطة جلسة، أعط خطة فعلية بالوقت والخطوات وكلام المدرب ونشاط المتدربين والأدوات والتقييم وخطة بديلة متى كان ذلك مناسباً.
-إذا طلب نشاطاً، أعط نشاطاً كاملاً قابلاً للتنفيذ. إذا طلب تقييماً، أعط الأسئلة والإجابات أو المهمة ومعيار التقييم. إذا طلب تبسيطاً، اشرح فعلياً مع أمثلة وتشبيهات مناسبة للسياق.
-تجنب الحشو. استخدم أمثلة مرتبطة بتخصص المستخدم وموضوعه ومستواه. لا تفرض قالباً ثابتاً إذا لم يكن مناسباً.
-إذا اختار "شيء آخر" أو كتب طلباً خاصاً، نفذه كما هو.
-قبل الإنهاء اسأل نفسك: هل أعطيت المدرب الناتج نفسه أم مجرد إرشاد لصناعته؟ إذا كان مجرد إرشاد، حوّله إلى ناتج جاهز.
+const SYSTEM_INSTRUCTION = `
+أنت "مساعد المدرب الذكي"، مساعد مهني للمدربين.
+أعطِ الناتج الجاهز للاستخدام مباشرة، ولا تكتفِ بإرشادات عامة.
+
+قواعد مهمة:
+- اكتب بالعربية الواضحة والمهنية.
+- خصّص الإجابة حسب التخصص والموضوع ومستوى المتدربين والوقت والعدد والهدف.
+- إذا طلب المستخدم خطة جلسة: أعطِ خطة فعلية موزعة زمنيًا، مع ما يقوله أو يفعله المدرب، وما يفعله المتدربون، والأدوات، والتقييم، والخطة البديلة عند الحاجة.
+- إذا طلب نشاطًا: أعطِ نشاطًا كاملًا قابلًا للتنفيذ، وليس مجرد اسم استراتيجية.
+- إذا طلب تقييمًا: أعطِ الأسئلة أو المهمة والإجابات أو معايير التقييم حسب الحاجة.
+- إذا طلب تبسيطًا: اشرح الموضوع فعليًا مع مثال وتشبيه مناسبين.
+- إذا كانت لديه مشكلة أثناء الجلسة: أعطِ خطوات عملية فورية قابلة للتطبيق الآن.
+- لا تربط استراتيجية تدريبية بالخدمة بشكل آلي؛ استخدمها فقط إذا كانت مناسبة.
+- إذا اختار "شيء آخر" أو كتب طلبًا خاصًا، نفّذ الطلب كما هو.
+- تجنب الحشو والعبارات العامة.
+- قبل الإنهاء تأكد: هل أعطيت المدرب الناتج نفسه أم فقط نصائح لصناعته؟ إن كان مجرد نصائح، حوّله إلى ناتج جاهز.
 `;
 
-function buildPrompt(body) {
+function buildUserPrompt(body = {}) {
   const {
-    stage, need, specialty, topic, level, duration, trainees, goal, extra, followup, history = []
-  } = body || {};
+    stage,
+    need,
+    specialty,
+    topic,
+    level,
+    duration,
+    trainees,
+    goal,
+    extra,
+    followup,
+    history = [],
+  } = body;
 
-  let prompt = `
+  let text = `
 المرحلة: ${stage || "غير محددة"}
 نوع المساعدة: ${need || "غير محدد"}
 التخصص: ${specialty || "غير محدد"}
-الموضوع أو الموقف: ${topic || "غير محدد"}
+الموضوع/الموقف: ${topic || "غير محدد"}
 مستوى المتدربين: ${level || "غير محدد"}
 الوقت المتاح: ${duration || "غير محدد"}
 عدد المتدربين: ${trainees || "غير محدد"}
@@ -29,87 +49,180 @@ function buildPrompt(body) {
 معلومات إضافية: ${extra || "لا يوجد"}
 `;
 
-  if (history?.length) {
-    prompt += "\nالسياق السابق المختصر:\n";
+  if (Array.isArray(history) && history.length) {
+    text += "\nالسياق السابق:\n";
+
     for (const item of history.slice(-6)) {
-      prompt += `${item.role === "assistant" ? "المساعد" : "المستخدم"}: ${item.content}\n`;
+      const who =
+        item.role === "assistant" ? "المساعد" : "المستخدم";
+
+      text += `${who}: ${item.content || ""}\n`;
     }
   }
 
   if (followup) {
-    prompt += `\nطلب التعديل أو المتابعة: ${followup}\n`;
+    text += `\nطلب المتابعة أو التعديل: ${followup}\n`;
   }
 
-  prompt += "\nأعطني الآن النتيجة الجاهزة مباشرة.";
-  return prompt;
+  text += "\nأعطني الآن الناتج الجاهز مباشرة.";
+
+  return text;
 }
 
-async function generateWithTimeout(model, prompt, ms = 12000) {
+async function callModel(model, prompt, timeoutMs) {
   const request = ai.models.generateContent({
     model,
     contents: prompt,
     config: {
-      systemInstruction: SYSTEM,
-      maxOutputTokens: 2800,
-      temperature: 0.6
-    }
+      systemInstruction: SYSTEM_INSTRUCTION,
+      maxOutputTokens: 3500,
+      temperature: 0.55,
+    },
   });
 
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(Object.assign(new Error("TIMEOUT"), { status: 504 })), ms)
-  );
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => {
+      const err = new Error("TIMEOUT");
+      err.status = 504;
+      reject(err);
+    }, timeoutMs);
+  });
 
   return Promise.race([request, timeout]);
 }
 
+function getStatus(err) {
+  return Number(
+    err?.status ||
+    err?.error?.code ||
+    err?.response?.status ||
+    500
+  );
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({
+      error: "طريقة الطلب غير مدعومة.",
+    });
   }
 
   if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({ error: "GEMINI_API_KEY غير موجود." });
+    return res.status(500).json({
+      error: "مفتاح Gemini غير موجود في إعدادات Vercel.",
+    });
   }
 
-  const prompt = buildPrompt(req.body);
+  const prompt = buildUserPrompt(req.body);
 
-  // Fast-first strategy: one quick attempt, then one quick fallback only on transient failure.
-  const primary = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
-  const fallback = process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash";
+  const primaryModel =
+    process.env.GEMINI_MODEL ||
+    "gemini-3.5-flash-lite";
+
+  const fallbackModel =
+    process.env.GEMINI_FALLBACK_MODEL ||
+    "gemini-3.6-flash";
 
   try {
-    const r = await generateWithTimeout(primary, prompt, 12000);
-    return res.status(200).json({ text: r.text || "" });
+    const response = await callModel(
+      primaryModel,
+      prompt,
+      10000
+    );
+
+    return res.status(200).json({
+      text:
+        response.text ||
+        "لم يتم توليد نص. حاولي مرة أخرى.",
+    });
+
   } catch (err) {
-    const status = err?.status || err?.error?.code || 500;
-    const msg = String(err?.message || "");
 
-    const transient = status === 503 || status === 429 || status === 504 || msg.includes("UNAVAILABLE") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("TIMEOUT");
+    const status = getStatus(err);
 
-    if (transient && fallback && fallback !== primary) {
+    const transient =
+      status === 503 ||
+      status === 504 ||
+      status === 429 ||
+      String(err?.message || "").includes("UNAVAILABLE") ||
+      String(err?.message || "").includes("TIMEOUT");
+
+    if (
+      transient &&
+      fallbackModel !== primaryModel
+    ) {
+
       try {
-        const r2 = await generateWithTimeout(fallback, prompt, 10000);
-        return res.status(200).json({ text: r2.text || "" });
+        const response2 = await callModel(
+          fallbackModel,
+          prompt,
+          8000
+        );
+
+        return res.status(200).json({
+          text:
+            response2.text ||
+            "لم يتم توليد نص. حاولي مرة أخرى.",
+        });
+
       } catch (err2) {
-        const status2 = err2?.status || err2?.error?.code || 500;
+
+        const status2 = getStatus(err2);
+
+        console.error(
+          "Gemini fallback error:",
+          err2
+        );
+
         if (status2 === 429) {
-          return res.status(429).json({ error: "تم الوصول إلى الحد المجاني مؤقتًا. حاولي بعد قليل." });
+          return res.status(429).json({
+            error:
+              "تم الوصول إلى الحد المجاني مؤقتًا. حاولي بعد قليل.",
+          });
         }
-        if (status2 === 503 || status2 === 504) {
-          return res.status(503).json({ error: "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. حاولي بعد دقيقة." });
+
+        if (
+          status2 === 503 ||
+          status2 === 504
+        ) {
+          return res.status(503).json({
+            error:
+              "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. حاولي بعد قليل.",
+          });
         }
-        return res.status(500).json({ error: "تعذر توليد الاستجابة حاليًا." });
+
+        return res.status(500).json({
+          error:
+            "تعذر توليد الاستجابة حاليًا.",
+        });
       }
     }
 
+    console.error(
+      "Gemini primary error:",
+      err
+    );
+
     if (status === 429) {
-      return res.status(429).json({ error: "تم الوصول إلى الحد المجاني مؤقتًا. حاولي بعد قليل." });
-    }
-    if (status === 503 || status === 504) {
-      return res.status(503).json({ error: "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. حاولي بعد دقيقة." });
+      return res.status(429).json({
+        error:
+          "تم الوصول إلى الحد المجاني مؤقتًا. حاولي بعد قليل.",
+      });
     }
 
-    console.error(err);
-    return res.status(500).json({ error: "تعذر توليد الاستجابة حاليًا." });
+    if (
+      status === 503 ||
+      status === 504
+    ) {
+      return res.status(503).json({
+        error:
+          "خدمة الذكاء الاصطناعي مشغولة مؤقتًا. حاولي بعد قليل.",
+      });
+    }
+
+    return res.status(500).json({
+      error:
+        "تعذر توليد الاستجابة حاليًا.",
+    });
   }
 }
