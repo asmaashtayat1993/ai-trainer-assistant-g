@@ -1,142 +1,141 @@
-import { GoogleGenAI } from "@google/genai";
-
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-});
-
 const SYSTEM_INSTRUCTION = `
-أنت مساعد المدرب الذكي.
-أعطِ المدرب الناتج الجاهز للاستخدام مباشرة، وليس نصائح عامة.
+أنت "مساعد المدرب الذكي"، مساعد مهني للمدربين.
+أعطِ الناتج الجاهز للاستخدام مباشرة، ولا تكتفِ بإرشادات عامة.
 
-اكتب بالعربية الواضحة.
-خصص الإجابة حسب التخصص والموضوع والمستوى والوقت وعدد المتدربين والهدف.
-
-إذا طلب خطة جلسة:
-- أعط خطة كاملة موزعة بالوقت.
-- اكتب ماذا يفعل المدرب.
-- اكتب ماذا يفعل المتدربون.
-- أعط أمثلة فعلية.
-- أعط نشاطًا جاهزًا.
-- أعط طريقة تقييم واضحة.
-- أعط بديلًا إذا لم ينجح النشاط.
-
-إذا طلب نشاطًا أو تقييمًا أو تبسيطًا أو حل مشكلة:
-أعطِ الناتج نفسه كاملًا وجاهزًا للتطبيق.
-
-تجنب الكلام العام والحشو.
+قواعد مهمة:
+- اكتب بالعربية الواضحة والمهنية.
+- خصّص الإجابة حسب التخصص والموضوع ومستوى المتدربين والوقت والعدد والهدف.
+- إذا طلب المستخدم خطة جلسة: أعطِ خطة فعلية موزعة زمنيًا، مع ما يقوله/يفعله المدرب، وما يفعله المتدربون، والأدوات، والتقييم، والبديل عند الحاجة.
+- إذا طلب نشاطًا: أعطِ نشاطًا كاملًا قابلًا للتنفيذ، لا مجرد اسم استراتيجية.
+- إذا طلب تقييمًا: أعطِ الأسئلة/المهمة والإجابات أو معايير التقييم حسب الحاجة.
+- إذا طلب تبسيطًا: اشرح الموضوع فعليًا مع مثال وتشبيه مناسبين.
+- إذا كانت لديه مشكلة أثناء الجلسة: أعطِ خطوات عملية فورية قابلة للتطبيق الآن.
+- لا تربط استراتيجية تدريبية بالخدمة بشكل آلي؛ استخدمها فقط إذا كانت مناسبة.
+- إذا اختار "شيء آخر" أو كتب طلبًا خاصًا، نفّذ الطلب كما هو.
+- تجنب الحشو والعبارات العامة.
+- أعطِ محتوى محددًا وعمليًا ومناسبًا للموضوع نفسه، وليس قالبًا عامًا.
+- قبل الإنهاء تأكد: هل أعطيت المدرب الناتج نفسه أم فقط نصائح لصناعته؟ إن كان مجرد نصائح، حوّله إلى ناتج جاهز.
 `;
 
 function buildPrompt(body = {}) {
-  return `
-المرحلة: ${body.stage || "غير محددة"}
-نوع المساعدة: ${body.need || "غير محدد"}
+  const stage = body.stageLabel || body.stage || "غير محددة";
+  let need = body.needLabel || body.need || "غير محدد";
+  if (body.need === "other" && body.otherNeed) need = body.otherNeed;
+
+  const duration = body.time || body.duration || "غير محدد";
+  const trainees = body.traineeCount || body.trainees || "غير محدد";
+  const followup = body.followUp || body.followup || "";
+  const history = body.conversation || body.history || [];
+
+  let text = `
+المرحلة: ${stage}
+نوع المساعدة: ${need}
 التخصص: ${body.specialty || "غير محدد"}
-الموضوع أو الموقف: ${body.topic || "غير محدد"}
+الموضوع/الموقف: ${body.topic || "غير محدد"}
 مستوى المتدربين: ${body.level || "غير محدد"}
-الوقت المتاح: ${body.duration || "غير محدد"}
-عدد المتدربين: ${body.trainees || "غير محدد"}
+الوقت المتاح: ${duration}
+عدد المتدربين: ${trainees}
 النتيجة المطلوبة: ${body.goal || "غير محددة"}
 معلومات إضافية: ${body.extra || "لا يوجد"}
-
-${body.followup ? `طلب المتابعة: ${body.followup}` : ""}
-
-أعطني الآن الناتج الجاهز مباشرة.
 `;
-}
 
-function extractText(response) {
-  if (response?.text && typeof response.text === "string") {
-    return response.text.trim();
-  }
-
-  const candidates = response?.candidates || [];
-
-  for (const candidate of candidates) {
-    const parts = candidate?.content?.parts || [];
-
-    const text = parts
-      .map(part => part?.text || "")
-      .join("\n")
-      .trim();
-
-    if (text) {
-      return text;
+  if (Array.isArray(history) && history.length) {
+    text += "\nالسياق السابق:\n";
+    for (const item of history.slice(-6)) {
+      const who = item.role === "assistant" ? "المساعد" : "المستخدم";
+      text += `${who}: ${item.content || ""}\n`;
     }
   }
 
-  return "";
+  if (followup) {
+    text += `\nطلب المتابعة أو التعديل: ${followup}\n`;
+  }
+
+  text += "\nأعطني الآن الناتج الجاهز مباشرة وبعمق مناسب للحالة.";
+  return text;
 }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({
-      error: "طريقة الطلب غير مدعومة.",
-    });
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=UTF-8",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+export async function onRequestPost(context) {
+  const apiKey = context.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return json({ error: "مفتاح Gemini غير موجود في إعدادات Cloudflare." }, 500);
   }
 
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(500).json({
-      error: "مفتاح Gemini غير موجود في Vercel.",
-    });
+  let body;
+  try {
+    body = await context.request.json();
+  } catch {
+    return json({ error: "بيانات الطلب غير صحيحة." }, 400);
   }
+
+  const prompt = buildPrompt(body);
+  const model = context.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const payload = {
+    system_instruction: {
+      parts: [{ text: SYSTEM_INSTRUCTION }]
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }]
+      }
+    ],
+    generationConfig: {
+      maxOutputTokens: 4000
+    }
+  };
 
   try {
-    const prompt = buildPrompt(req.body);
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash-lite",
-
-      contents: prompt,
-
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.6,
-        maxOutputTokens: 4000,
-      },
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
     });
 
-    const text = extractText(response);
+    const data = await r.json();
 
-    if (!text) {
-      console.error(
-        "Gemini returned no text:",
-        JSON.stringify(response)
-      );
-
-      return res.status(502).json({
-        error: "وصل رد من Gemini لكنه لم يحتوِ على نص.",
-      });
+    if (!r.ok) {
+      console.log("Gemini error", r.status, JSON.stringify(data));
+      if (r.status === 429) {
+        return json({ error: "تم الوصول إلى الحد المجاني مؤقتًا. حاولي بعد قليل." }, 429);
+      }
+      if (r.status === 503) {
+        return json({ error: "خدمة Gemini مشغولة مؤقتًا. حاولي بعد قليل." }, 503);
+      }
+      return json({ error: data?.error?.message || "تعذر توليد الاستجابة حاليًا." }, r.status);
     }
 
-    return res.status(200).json({
-      text,
-    });
+    const answer =
+      data?.candidates?.[0]?.content?.parts
+        ?.map(p => p?.text || "")
+        .join("")
+        .trim() || "";
 
-  } catch (error) {
-    console.error("Gemini Error:", error);
-
-    const status =
-      error?.status ||
-      error?.error?.code ||
-      500;
-
-    if (status === 503) {
-      return res.status(503).json({
-        error:
-          "خدمة Gemini مشغولة حاليًا. حاولي مرة أخرى بعد قليل.",
-      });
+    if (!answer) {
+      return json({ error: "لم يصل نص من Gemini. حاولي مرة أخرى." }, 502);
     }
 
-    if (status === 429) {
-      return res.status(429).json({
-        error:
-          "تم الوصول إلى الحد المجاني مؤقتًا.",
-      });
-    }
-
-    return res.status(500).json({
-      error:
-        "حدث خطأ أثناء الاتصال بالذكاء الاصطناعي.",
-    });
+    return json({ answer });
+  } catch (e) {
+    console.log("Request error", e);
+    return json({ error: "تعذر الاتصال بخدمة Gemini حاليًا." }, 502);
   }
+}
+
+export function onRequest(context) {
+  if (context.request.method === "POST") return onRequestPost(context);
+  return json({ error: "طريقة الطلب غير مدعومة." }, 405);
 }
