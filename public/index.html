@@ -229,7 +229,7 @@ function renderMarkdown(md){
      .replace(/^# (.+)$/gm,"<h2>$1</h2>")
      .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
      .replace(/^---$/gm,"<hr>");
-  const lines=x.split("\\n");
+  const lines=x.split("\n");
   let out=[],inUl=false,inOl=false;
   for(const line of lines){
     if(/^[-•] /.test(line)){
